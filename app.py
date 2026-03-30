@@ -224,7 +224,9 @@ def generate_summary(history):
         sc(ws.cell(row=r,column=12,value=f'=IF(ABS(SUM(C{r}:J{r})-K{r})<0.02,"✓","✗")'),font=nf)
     tr=4+len(history)
     sc(ws.cell(row=tr,column=1,value='YTD TOTAL'),font=bf,fill=tfill); sc(ws.cell(row=tr,column=2),fill=tfill)
-    for c in range(3,13): sc(ws.cell(row=tr,column=c,value=f'=SUM({get_column_letter(c)}4:{get_column_letter(c)}{tr-1})') if c<12 else sc(ws.cell(row=tr,column=c),fill=tfill),font=bf,fill=tfill,fmt=mfmt)
+    for c in range(3,12):
+        sc(ws.cell(row=tr,column=c,value=f'=SUM({get_column_letter(c)}4:{get_column_letter(c)}{tr-1})'),font=bf,fill=tfill,fmt=mfmt)
+    sc(ws.cell(row=tr,column=12),fill=tfill)
     for c in range(1,13): ws.column_dimensions[get_column_letter(c)].width=16
 
     # Sheet 2: עלות לפי עובד
