@@ -389,6 +389,166 @@ def generate_excel(payroll_data_list, accounts, credit_account, history=None):
     return wb
 
 
+def generate_summary_excel(history):
+    """Generate summary-only Excel from history (no journal entry sheet)."""
+    wb = Workbook()
+
+    hf = Font(name='Arial', bold=True, size=11, color='FFFFFF')
+    hfill = PatternFill('solid', fgColor='2F5496')
+    nf = Font(name='Arial', size=10)
+    bf = Font(name='Arial', bold=True, size=10)
+    tfill = PatternFill('solid', fgColor='E2EFDA')
+    mfmt = '#,##0.00'
+    tb = Border(left=Side(style='thin'), right=Side(style='thin'),
+                top=Side(style='thin'), bottom=Side(style='thin'))
+
+    def sc(cell, font=None, fill=None, fmt=None, align=None):
+        if font: cell.font = font
+        if fill: cell.fill = fill
+        if fmt: cell.number_format = fmt
+        if align: cell.alignment = align
+        cell.border = tb
+
+    sh = ['Pay Date', 'Invoice #', 'Gross Wages', 'Expense Reimb.', 'ER Fed&State Tax',
+          'Workers Comp', 'Emp Benefits', 'Admin Fee', '401k ER Contrib', '401k Est Fee', 'Total Invoice']
+
+    # ---- Sheet 1: סיכום לפי תקופה (YTD) ----
+    ws = wb.active
+    ws.title = 'סיכום לפי תקופה'
+    ws.merge_cells('A1:K1')
+    ws['A1'] = f'BRANDLIGHT INC. - Payroll Invoice Summary YTD {datetime.now().year}'
+    ws['A1'].font = Font(name='Arial', bold=True, size=14, color='2F5496')
+    ws['A1'].alignment = Alignment(horizontal='center')
+
+    for c, h in enumerate(sh, 1):
+        sc(ws.cell(row=3, column=c, value=h), font=hf, fill=hfill,
+           align=Alignment(horizontal='center', wrap_text=True))
+
+    for i, h in enumerate(history):
+        r = 4 + i
+        comps = h.get('components', {})
+        sc(ws.cell(row=r, column=1, value=h.get('pay_date_hebrew', '')), font=nf)
+        sc(ws.cell(row=r, column=2, value=h.get('invoice_number', '')), font=nf)
+        for ci, field in enumerate(INVOICE_FIELDS_ORDER):
+            val = comps.get(field, 0) or 0
+            sc(ws.cell(row=r, column=3+ci, value=val), font=nf, fmt=mfmt)
+        sc(ws.cell(row=r, column=11, value=h.get('invoice_total', 0)), font=bf, fmt=mfmt)
+
+    tr = 4 + len(history)
+    sc(ws.cell(row=tr, column=1, value='YTD TOTAL'), font=bf, fill=tfill)
+    sc(ws.cell(row=tr, column=2), fill=tfill)
+    for c in range(3, 12):
+        sc(ws.cell(row=tr, column=c,
+           value=f'=SUM({get_column_letter(c)}4:{get_column_letter(c)}{tr-1})'),
+           font=bf, fill=tfill, fmt=mfmt)
+
+    # Verification column
+    sc(ws.cell(row=3, column=12, value='Verification'), font=hf, fill=hfill,
+       align=Alignment(horizontal='center', wrap_text=True))
+    for i in range(len(history)):
+        r = 4 + i
+        sc(ws.cell(row=r, column=12,
+           value=f'=IF(ABS(SUM(C{r}:J{r})-K{r})<0.02,"✓","✗ "&TEXT(SUM(C{r}:J{r})-K{r},"#,##0.00"))'),
+           font=nf)
+
+    for c in range(1, 13):
+        ws.column_dimensions[get_column_letter(c)].width = 16
+
+    # ---- Sheet 2: סיכום לפי רכיב (Pivot by component) ----
+    ws2 = wb.create_sheet('סיכום לפי רכיב')
+    ws2.merge_cells('A1:D1')
+    ws2['A1'] = f'BRANDLIGHT INC. - Cost by Component YTD {datetime.now().year}'
+    ws2['A1'].font = Font(name='Arial', bold=True, size=14, color='2F5496')
+    ws2['A1'].alignment = Alignment(horizontal='center')
+
+    comp_headers = ['Component', 'Account #', 'YTD Total ($)', '% of Total']
+    for c, h in enumerate(comp_headers, 1):
+        sc(ws2.cell(row=3, column=c, value=h), font=hf, fill=hfill,
+           align=Alignment(horizontal='center', wrap_text=True))
+
+    comp_totals = {}
+    for h in history:
+        comps = h.get('components', {})
+        for field in INVOICE_FIELDS_ORDER:
+            val = comps.get(field, 0) or 0
+            acct_name = FIELD_TO_ACCOUNT_NAME.get(field, field)
+            comp_totals[field] = comp_totals.get(field, 0) + val
+
+    grand_total = sum(comp_totals.values())
+    r = 4
+    for field in INVOICE_FIELDS_ORDER:
+        acct_name = FIELD_TO_ACCOUNT_NAME.get(field, field)
+        acct_num = DEFAULT_ACCOUNTS.get(acct_name, "")
+        val = comp_totals.get(field, 0)
+        sc(ws2.cell(row=r, column=1, value=acct_name), font=nf)
+        sc(ws2.cell(row=r, column=2, value=acct_num), font=nf, align=Alignment(horizontal='center'))
+        sc(ws2.cell(row=r, column=3, value=val), font=nf, fmt=mfmt)
+        pct = val / grand_total if grand_total > 0 else 0
+        sc(ws2.cell(row=r, column=4, value=pct), font=nf, fmt='0.0%')
+        r += 1
+
+    sc(ws2.cell(row=r, column=1, value='TOTAL'), font=bf, fill=tfill)
+    sc(ws2.cell(row=r, column=2), fill=tfill)
+    sc(ws2.cell(row=r, column=3, value=f'=SUM(C4:C{r-1})'), font=bf, fill=tfill, fmt=mfmt)
+    sc(ws2.cell(row=r, column=4, value=1), font=bf, fill=tfill, fmt='0.0%')
+
+    for c in range(1, 5):
+        ws2.column_dimensions[get_column_letter(c)].width = [34, 14, 20, 14][c-1]
+
+    # ---- Sheet 3: סיכום לפי חודש ----
+    ws3 = wb.create_sheet('סיכום לפי חודש')
+    ws3.merge_cells('A1:D1')
+    ws3['A1'] = f'BRANDLIGHT INC. - Monthly Summary YTD {datetime.now().year}'
+    ws3['A1'].font = Font(name='Arial', bold=True, size=14, color='2F5496')
+    ws3['A1'].alignment = Alignment(horizontal='center')
+
+    month_headers = ['Month', 'Invoices', 'Total ($)', '% of YTD']
+    for c, h in enumerate(month_headers, 1):
+        sc(ws3.cell(row=3, column=c, value=h), font=hf, fill=hfill,
+           align=Alignment(horizontal='center', wrap_text=True))
+
+    monthly = {}
+    for h in history:
+        date_str = h.get('pay_date', '')
+        if date_str:
+            parts = date_str.split('/')
+            if len(parts) == 3:
+                month_key = f"{parts[2]}-{parts[0]}"  # YYYY-MM
+                month_name = datetime.strptime(f"{parts[0]}/{parts[2]}", "%m/%Y").strftime("%B %Y")
+            else:
+                month_key = date_str[:7]
+                month_name = month_key
+        else:
+            month_key = "Unknown"
+            month_name = "Unknown"
+
+        if month_key not in monthly:
+            monthly[month_key] = {'name': month_name, 'count': 0, 'total': 0}
+        monthly[month_key]['count'] += 1
+        monthly[month_key]['total'] += h.get('invoice_total', 0) or 0
+
+    ytd_total = sum(m['total'] for m in monthly.values())
+    r = 4
+    for key in sorted(monthly.keys()):
+        m = monthly[key]
+        sc(ws3.cell(row=r, column=1, value=m['name']), font=nf)
+        sc(ws3.cell(row=r, column=2, value=m['count']), font=nf, align=Alignment(horizontal='center'))
+        sc(ws3.cell(row=r, column=3, value=m['total']), font=nf, fmt=mfmt)
+        pct = m['total'] / ytd_total if ytd_total > 0 else 0
+        sc(ws3.cell(row=r, column=4, value=pct), font=nf, fmt='0.0%')
+        r += 1
+
+    sc(ws3.cell(row=r, column=1, value='YTD TOTAL'), font=bf, fill=tfill)
+    sc(ws3.cell(row=r, column=2, value=f'=SUM(B4:B{r-1})'), font=bf, fill=tfill, align=Alignment(horizontal='center'))
+    sc(ws3.cell(row=r, column=3, value=f'=SUM(C4:C{r-1})'), font=bf, fill=tfill, fmt=mfmt)
+    sc(ws3.cell(row=r, column=4, value=1), font=bf, fill=tfill, fmt='0.0%')
+
+    for c in range(1, 5):
+        ws3.column_dimensions[get_column_letter(c)].width = [20, 12, 20, 14][c-1]
+
+    return wb
+
+
 # ============================================================
 # STREAMLIT UI
 # ============================================================
@@ -556,7 +716,11 @@ else:
 
 # YTD History tab
 if st.session_state.history:
-    with st.expander("📚 היסטוריית חשבוניות YTD", expanded=False):
+    st.divider()
+    st.subheader("📚 דוחות מצטברים YTD")
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
         hist_data = []
         for h in st.session_state.history:
             hist_data.append({
@@ -565,3 +729,21 @@ if st.session_state.history:
                 "סה\"כ": f"${h.get('invoice_total', 0):,.2f}",
             })
         st.dataframe(hist_data, use_container_width=True, hide_index=True)
+
+    with col2:
+        ytd_total = sum(h.get('invoice_total', 0) or 0 for h in st.session_state.history)
+        st.metric("חשבוניות", len(st.session_state.history))
+        st.metric("סה\"כ YTD", f"${ytd_total:,.2f}")
+
+        wb_summary = generate_summary_excel(st.session_state.history)
+        out_summary = io.BytesIO()
+        wb_summary.save(out_summary)
+        out_summary.seek(0)
+
+        st.download_button(
+            "📊 הורד דוח מצטבר YTD",
+            data=out_summary,
+            file_name=f"Brandlight_YTD_Summary_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary"
+        )
