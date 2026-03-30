@@ -84,21 +84,58 @@ def add_to_history(payroll_data_list, history):
 # ============================================================
 # PDF EXTRACTION
 # ============================================================
+def read_pages_from_file(file_bytes):
+    """Try ZIP first (Vfficient export format), then real PDF."""
+    all_text = {}
+
+    # Try ZIP format
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_bytes), 'r') as z:
+            txt_files = sorted(
+                [f for f in z.namelist() if f.endswith('.txt')],
+                key=lambda x: int(x.replace('.txt', ''))
+            )
+            for tf in txt_files:
+                page_num = int(tf.replace('.txt', ''))
+                all_text[page_num] = z.read(tf).decode('utf-8', errors='replace')
+            if all_text:
+                return all_text
+    except (zipfile.BadZipFile, Exception):
+        pass
+
+    # Real PDF — use pypdf
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(file_bytes))
+        for i, page in enumerate(reader.pages):
+            text = page.extract_text() or ""
+            if text.strip():
+                all_text[i + 1] = text
+    except ImportError:
+        # Fallback to pdfplumber
+        try:
+            import pdfplumber
+            with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+                for i, page in enumerate(pdf.pages):
+                    text = page.extract_text() or ""
+                    if text.strip():
+                        all_text[i + 1] = text
+        except ImportError:
+            raise RuntimeError("No PDF library found. Install pypdf: pip install pypdf")
+
+    return all_text
+
+
 def extract_pdf_data(uploaded_file):
     data = {"employees": [], "invoice": {}, "pay_date": "", "invoice_number": "", "invoice_total": 0}
 
     file_bytes = uploaded_file.read()
     uploaded_file.seek(0)
 
-    with zipfile.ZipFile(io.BytesIO(file_bytes), 'r') as z:
-        txt_files = sorted(
-            [f for f in z.namelist() if f.endswith('.txt')],
-            key=lambda x: int(x.replace('.txt', ''))
-        )
-        all_text = {}
-        for tf in txt_files:
-            page_num = int(tf.replace('.txt', ''))
-            all_text[page_num] = z.read(tf).decode('utf-8', errors='replace')
+    all_text = read_pages_from_file(file_bytes)
+
+    if not all_text:
+        raise ValueError("Could not extract text from file")
 
     # Extract invoice
     for page_num in sorted(all_text.keys()):
@@ -143,7 +180,10 @@ def parse_invoice_page(text):
 
     lines = [l.strip() for l in text.replace('\r', '').split('\n') if l.strip()]
 
-    # Strategy 1: fields and amounts on separate sequential lines
+    result = {f: None for f in field_names}
+    total = None
+
+    # Strategy 1: fields on separate lines, then amounts on separate lines (ZIP/text format)
     found_fields = []
     amount_lines = []
     for i, line in enumerate(lines):
@@ -153,9 +193,6 @@ def parse_invoice_page(text):
         if re.match(r'^[\d,]+\.\d{2}$', line):
             amount_lines.append((i, float(line.replace(',', ''))))
 
-    result = {f: None for f in field_names}
-    total = None
-
     if found_fields and amount_lines:
         last_field_idx = found_fields[-1][0]
         relevant_amounts = [(idx, amt) for idx, amt in amount_lines if idx > last_field_idx]
@@ -163,7 +200,7 @@ def parse_invoice_page(text):
             if i < len(relevant_amounts):
                 result[field] = relevant_amounts[i][1]
 
-    # If strategy 1 failed, try strategy 2: field and amount on same line
+    # Strategy 2: field and amount on same line (real PDF extraction)
     if all(v is None for v in result.values()):
         for line in lines:
             for field in field_names:
@@ -171,6 +208,14 @@ def parse_invoice_page(text):
                     amounts = re.findall(r'[\d,]+\.\d{2}', line)
                     if amounts:
                         result[field] = float(amounts[-1].replace(',', ''))
+
+    # Strategy 3: combined text block - look for amounts near field names
+    if all(v is None for v in result.values()):
+        full_text = ' '.join(lines)
+        for field in field_names:
+            m = re.search(re.escape(field) + r'\s+([\d,]+\.\d{2})', full_text)
+            if m:
+                result[field] = float(m.group(1).replace(',', ''))
 
     # Extract total
     for line in lines:
@@ -182,6 +227,13 @@ def parse_invoice_page(text):
             amounts = re.findall(r'[\d,]+\.\d{2}', line)
             if amounts:
                 total = float(amounts[-1].replace(',', ''))
+
+    # Fallback total from full text
+    if total is None:
+        full_text = ' '.join(lines)
+        m = re.search(r'TOTAL\s+INVOICE\s+([\d,]+\.\d{2})', full_text)
+        if m:
+            total = float(m.group(1).replace(',', ''))
 
     invoice['components'] = result
     invoice['total'] = total
