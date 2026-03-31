@@ -205,6 +205,82 @@ def generate_journal(plist, accounts, credit):
             sc(ws.cell(row=row,column=8,value=amt),font=nf,fmt=mfmt)
             row+=1
     for c,w in enumerate([14,16,16,16,34,14,18,18],1): ws.column_dimensions[get_column_letter(c)].width=w
+
+    # Sheet 2: סיכום לפי תקופה
+    sh=['Pay Date','Invoice #','Gross Wages','Expense Reimb.','ER Fed&State Tax','Workers Comp','Emp Benefits','Admin Fee','401k ER Contrib','401k Est Fee','Total Invoice']
+    ws2=wb.create_sheet('סיכום לפי תקופה'); ws2.merge_cells('A1:K1')
+    ws2['A1']='BRANDLIGHT INC. - Invoice Summary'; ws2['A1'].font=Font(name='Arial',bold=True,size=14,color='2F5496'); ws2['A1'].alignment=Alignment(horizontal='center')
+    for c,h in enumerate(sh,1): sc(ws2.cell(row=3,column=c,value=h),font=hf,fill=hfill,align=Alignment(horizontal='center',wrap_text=True))
+    for i,p in enumerate(plist):
+        r=4+i; comps=p['invoice'].get('components',{})
+        sc(ws2.cell(row=r,column=1,value=p['pay_date_hebrew']),font=nf)
+        sc(ws2.cell(row=r,column=2,value=p['invoice_number']),font=nf)
+        for ci,field in enumerate(INVOICE_FIELDS_ORDER): sc(ws2.cell(row=r,column=3+ci,value=comps.get(field,0) or 0),font=nf,fmt=mfmt)
+        sc(ws2.cell(row=r,column=11,value=p['invoice'].get('total',0)),font=bf,fmt=mfmt)
+    tr2=4+len(plist)
+    sc(ws2.cell(row=tr2,column=1,value='TOTAL'),font=bf,fill=tfill); sc(ws2.cell(row=tr2,column=2),fill=tfill)
+    for c in range(3,12): sc(ws2.cell(row=tr2,column=c,value=f'=SUM({get_column_letter(c)}4:{get_column_letter(c)}{tr2-1})'),font=bf,fill=tfill,fmt=mfmt)
+    for c in range(1,12): ws2.column_dimensions[get_column_letter(c)].width=16
+
+    # Sheet 3: עלות לפי עובד
+    ws3=wb.create_sheet('עלות לפי עובד'); ws3.merge_cells('A1:H1')
+    ws3['A1']='BRANDLIGHT INC. - Employee Cost by Period'; ws3['A1'].font=Font(name='Arial',bold=True,size=14,color='2F5496'); ws3['A1'].alignment=Alignment(horizontal='center')
+    for c,h in enumerate(['Pay Date','Invoice #','Employee ID','Employee Name','Gross Pay ($)','Employer Cost ($)','Total Cost ($)','Verify'],1):
+        sc(ws3.cell(row=3,column=c,value=h),font=hf,fill=hfill,align=Alignment(horizontal='center',wrap_text=True))
+    r3=4
+    for p in plist:
+        emps=p.get('employees',[])
+        sr=r3
+        for emp in emps:
+            sc(ws3.cell(row=r3,column=1,value=p['pay_date_hebrew']),font=nf)
+            sc(ws3.cell(row=r3,column=2,value=p['invoice_number']),font=nf)
+            sc(ws3.cell(row=r3,column=3,value=emp.get('id','')),font=nf)
+            sc(ws3.cell(row=r3,column=4,value=emp.get('name','')),font=nf)
+            sc(ws3.cell(row=r3,column=5,value=emp.get('gross_pay',0)),font=nf,fmt=mfmt)
+            sc(ws3.cell(row=r3,column=6,value=emp.get('employer_cost',0)),font=nf,fmt=mfmt)
+            sc(ws3.cell(row=r3,column=7,value=f'=E{r3}+F{r3}'),font=nf,fmt=mfmt)
+            r3+=1
+        if emps:
+            sc(ws3.cell(row=r3,column=1,value=p['pay_date_hebrew']),font=bf,fill=tfill)
+            sc(ws3.cell(row=r3,column=4,value='סה"כ תקופה'),font=bf,fill=tfill)
+            for cc in [2,3]: sc(ws3.cell(row=r3,column=cc),fill=tfill)
+            sc(ws3.cell(row=r3,column=5,value=f'=SUM(E{sr}:E{r3-1})'),font=bf,fill=tfill,fmt=mfmt)
+            sc(ws3.cell(row=r3,column=6,value=f'=SUM(F{sr}:F{r3-1})'),font=bf,fill=tfill,fmt=mfmt)
+            sc(ws3.cell(row=r3,column=7,value=f'=SUM(G{sr}:G{r3-1})'),font=bf,fill=tfill,fmt=mfmt)
+            inv_t=p['invoice'].get('total',0)
+            sc(ws3.cell(row=r3,column=8,value=f'=IF(ABS(G{r3}-{inv_t})<1,"✓","✗")'),font=nf,fill=tfill)
+            r3+=1
+        r3+=1
+    for c,w in enumerate([14,12,12,22,18,18,18,10],1): ws3.column_dimensions[get_column_letter(c)].width=w
+
+    # Sheet 4: סיכום עובד רבעוני
+    ws4=wb.create_sheet('סיכום עובד רבעוני'); ws4.merge_cells('A1:F1')
+    ws4['A1']='BRANDLIGHT INC. - Employee Summary'; ws4['A1'].font=Font(name='Arial',bold=True,size=14,color='2F5496'); ws4['A1'].alignment=Alignment(horizontal='center')
+    et={}
+    for p in plist:
+        for emp in p.get('employees',[]):
+            eid=emp.get('id','')
+            if eid not in et: et[eid]={'name':emp['name'],'id':eid,'gross':0,'er':0}
+            et[eid]['gross']+=emp.get('gross_pay',0); et[eid]['er']+=emp.get('employer_cost',0)
+    for c,h in enumerate(['Employee ID','Employee Name','Total Gross ($)','Total ER Cost ($)','Total Cost ($)','% of Total'],1):
+        sc(ws4.cell(row=3,column=c,value=h),font=hf,fill=hfill,align=Alignment(horizontal='center',wrap_text=True))
+    gt=sum(e['gross']+e['er'] for e in et.values())
+    r4=4
+    for eid in sorted(et,key=lambda x:et[x]['name']):
+        e=et[eid]
+        sc(ws4.cell(row=r4,column=1,value=e['id']),font=nf)
+        sc(ws4.cell(row=r4,column=2,value=e['name']),font=nf)
+        sc(ws4.cell(row=r4,column=3,value=round(e['gross'],2)),font=nf,fmt=mfmt)
+        sc(ws4.cell(row=r4,column=4,value=round(e['er'],2)),font=nf,fmt=mfmt)
+        sc(ws4.cell(row=r4,column=5,value=f'=C{r4}+D{r4}'),font=bf,fmt=mfmt)
+        sc(ws4.cell(row=r4,column=6,value=(e['gross']+e['er'])/gt if gt else 0),font=nf,fmt=pfmt)
+        r4+=1
+    if et:
+        sc(ws4.cell(row=r4,column=1),fill=tfill); sc(ws4.cell(row=r4,column=2,value='TOTAL'),font=bf,fill=tfill)
+        for c in [3,4,5]: sc(ws4.cell(row=r4,column=c,value=f'=SUM({get_column_letter(c)}4:{get_column_letter(c)}{r4-1})'),font=bf,fill=tfill,fmt=mfmt)
+        sc(ws4.cell(row=r4,column=6,value=1),font=bf,fill=tfill,fmt=pfmt)
+    for c,w in enumerate([14,22,20,22,20,12],1): ws4.column_dimensions[get_column_letter(c)].width=w
+
     return wb
 
 def generate_summary(history):
@@ -402,7 +478,7 @@ if uploaded_files:
         dc1,dc2=st.columns(2)
         with dc1:
             wb1=generate_journal(all_data,accounts,credit); o1=io.BytesIO(); wb1.save(o1); o1.seek(0)
-            st.download_button("⬇️ פקודת יומן",data=o1,type="primary",file_name=f"Brandlight_Journal_{datetime.now().strftime('%Y%m%d')}.xlsx",mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.download_button("⬇️ פקודת יומן + סיכומים",data=o1,type="primary",file_name=f"Brandlight_Journal_{datetime.now().strftime('%Y%m%d')}.xlsx",mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
         with dc2:
             if st.session_state.history:
                 wb2=generate_summary(st.session_state.history); o2=io.BytesIO(); wb2.save(o2); o2.seek(0)
