@@ -4,6 +4,9 @@ from datetime import datetime
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.drawing.image import Image as XlImage
+
+LOGO_FILE = os.path.join(os.path.dirname(__file__), 'logo.jpg')
 
 st.set_page_config(page_title="Brandlight Payroll → חשבשבת", page_icon="📊", layout="wide")
 
@@ -184,6 +187,14 @@ def make_styles():
         cell.border=tb
     return hf,hfill,nf,bf,tfill,mfmt,pfmt,tb,sc
 
+def add_logo_to_sheet(ws, cell='A1'):
+    if os.path.exists(LOGO_FILE):
+        try:
+            img = XlImage(LOGO_FILE)
+            img.width = 60; img.height = 58
+            ws.add_image(img, cell)
+        except: pass
+
 def generate_journal(plist, accounts, credit):
     wb=Workbook(); hf,hfill,nf,bf,tfill,mfmt,pfmt,tb,sc=make_styles()
     ws=wb.active; ws.title='פקודת יומן'
@@ -210,6 +221,7 @@ def generate_journal(plist, accounts, credit):
             sc(ws.cell(row=row,column=8,value=amt),font=nf,fmt=mfmt)
             row+=1
     for c,w in enumerate([14,16,16,16,34,14,18,18],1): ws.column_dimensions[get_column_letter(c)].width=w
+    add_logo_to_sheet(ws)
 
     # Sheet 2: סיכום לפי תקופה
     sh=['Pay Date','Invoice #','Gross Wages','Expense Reimb.','ER Fed&State Tax','Workers Comp','Emp Benefits','Admin Fee','401k ER Contrib','401k Est Fee','Total Invoice']
@@ -285,6 +297,7 @@ def generate_journal(plist, accounts, credit):
         for c in [3,4,5]: sc(ws4.cell(row=r4,column=c,value=f'=SUM({get_column_letter(c)}4:{get_column_letter(c)}{r4-1})'),font=bf,fill=tfill,fmt=mfmt)
         sc(ws4.cell(row=r4,column=6,value=1),font=bf,fill=tfill,fmt=pfmt)
     for c,w in enumerate([14,22,20,22,20,12],1): ws4.column_dimensions[get_column_letter(c)].width=w
+    add_logo_to_sheet(ws2); add_logo_to_sheet(ws3); add_logo_to_sheet(ws4)
 
     return wb
 
@@ -418,6 +431,7 @@ def generate_summary(history):
     sc(ws5.cell(row=r,column=3,value=f'=SUM(C4:C{r-1})'),font=bf,fill=tfill,fmt=mfmt)
     sc(ws5.cell(row=r,column=4,value=1),font=bf,fill=tfill,fmt=pfmt)
     for c,w in enumerate([20,12,20,14],1): ws5.column_dimensions[get_column_letter(c)].width=w
+    add_logo_to_sheet(ws); add_logo_to_sheet(ws2); add_logo_to_sheet(ws3); add_logo_to_sheet(ws4); add_logo_to_sheet(ws5)
     return wb
 
 # ============================================================
@@ -428,6 +442,7 @@ st.markdown("**העלי קבצי Payroll PDF → פקודת יומן + דוחו�
 if 'history' not in st.session_state: st.session_state.history = load_history()
 
 with st.sidebar:
+    if os.path.exists(LOGO_FILE): st.image(LOGO_FILE, width=80)
     st.header("⚙️ חשבונות")
     accounts = {}
     for name,default in DEFAULT_ACCOUNTS.items(): accounts[name]=st.text_input(name,value=default,key=f"a_{name}")
