@@ -115,7 +115,12 @@ def parse_employees(all_text):
             em = re.search(r'^(.+?)\s+Emp ID\s*:\s*(\w+)',line)
             if em:
                 cur_name = em.group(1).strip(); cur_id = em.group(2).strip(); continue
+            # Format 1 (ZIP/text): Total Pay 48.27 13,950.75 Total Taxes 5,715.82 Total Deductions 658.52 839.53
             tp = re.search(r'Total Pay\s+[\d.]+\s+([\d,]+\.\d{2})\s+Total Taxes\s+([\d,]+\.\d{2})\s+Total Deductions\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})',line)
+            # Format 2 (pypdf): 13,950.7548.27 5,715.82 658.52Total Pay Total Taxes Total Deductions 839.53
+            if not tp:
+                tp2 = re.search(r'([\d,]+\.\d{2})[\d.]+ ([\d,]+\.\d{2}) ([\d,]+\.\d{2})Total Pay Total Taxes Total Deductions ([\d,]+\.\d{2})',line)
+                if tp2: tp = tp2
             if tp and cur_name:
                 employees.append({'name':cur_name,'id':cur_id,
                     'gross_pay':float(tp.group(1).replace(',','')),
